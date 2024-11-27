@@ -9,7 +9,7 @@
 namespace mc_plugin
 {
 
-struct NewPlugin : public mc_control::GlobalPlugin
+struct obstacle_detection_jerk_estimator : public mc_control::GlobalPlugin
 {
   void init(mc_control::MCGlobalController & controller, const mc_rtc::Configuration & config) override;
 
@@ -21,7 +21,7 @@ struct NewPlugin : public mc_control::GlobalPlugin
 
   mc_control::GlobalPlugin::GlobalPluginConfiguration configuration() override;
 
-  ~NewPlugin() override;
+  ~obstacle_detection_jerk_estimator() override;
 
 private:
 };
