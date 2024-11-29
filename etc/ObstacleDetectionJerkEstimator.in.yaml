@@ -1,0 +1,5 @@
+---
+imuBodyName: "Accelerometer"
+k: 1.0
+alpha_rot: 0.5
+alpha_jerk: 0.5
