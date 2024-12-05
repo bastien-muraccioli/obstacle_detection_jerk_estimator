@@ -1,4 +1,5 @@
 ---
+obstacleThreshold: 10000.0
 imuBodyName: "Accelerometer"
 k: 1.0
 alpha_rot: 0.5

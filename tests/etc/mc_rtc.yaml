@@ -4,5 +4,5 @@ Enabled: Posture
 
 IncludeHalfSitController: false
 ClearGlobalPluginiPath: true
-Plugins: [ obstacle_detection_jerk_estimator ]
-GlobalPluginPaths: ["$<TARGET_FILE_DIR:obstacle_detection_jerk_estimator>"]
+Plugins: [ ObstacleDetectionJerkEstimator ]
+GlobalPluginPaths: ["$<TARGET_FILE_DIR:ObstacleDetectionJerkEstimator>"]

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.1)
 
 project(
-  obstacle_detection_jerk_estimator
+  ObstacleDetectionJerkEstimator
   LANGUAGES CXX
   VERSION 1.0.0)
 
@@ -14,18 +14,21 @@ if(NOT TARGET mc_rtc::mc_control)
 endif()
 
 # Configure and install the plugin configuration
-configure_file(etc/obstacle_detection_jerk_estimator.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/obstacle_detection_jerk_estimator.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/obstacle_detection_jerk_estimator.yaml"
+configure_file(etc/ObstacleDetectionJerkEstimator.in.yaml
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/ObstacleDetectionJerkEstimator.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ObstacleDetectionJerkEstimator.yaml"
         DESTINATION "${MC_PLUGINS_RUNTIME_INSTALL_PREFIX}/etc")
 
-set(plugin_SRC src/obstacle_detection_jerk_estimator.cpp)
+set(plugin_SRC src/ObstacleDetectionJerkEstimator.cpp)
 
-set(plugin_HDR src/obstacle_detection_jerk_estimator.h)
+set(plugin_HDR src/ObstacleDetectionJerkEstimator.h)
 
 # The add_plugin macro is provided by mc_rtc
-add_plugin(obstacle_detection_jerk_estimator "${plugin_SRC}" "${plugin_HDR}")
+add_plugin(ObstacleDetectionJerkEstimator ${plugin_SRC} ${plugin_HDR})
 
-if(BUILD_TESTING)
-  add_subdirectory(tests)
-endif()
+link_libraries(ObstacleDetectionJerkEstimator state-observation::state-observation)
+# target_link_libraries(ObstacleDetectionJerkEstimator PUBLIC state-observation::state-observation)
+
+# if(BUILD_TESTING)
+#   add_subdirectory(tests)
+# endif()
