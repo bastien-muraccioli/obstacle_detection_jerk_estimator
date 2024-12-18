@@ -1,6 +1,15 @@
 ---
 obstacleThreshold: 10000.0
+collision_stop_activated: true
 imuBodyName: "Accelerometer"
+robotBodyName: "FT_sensor_mounting"
+estimationType: "With Linear Velocity"
 k: 1.0
-alpha_rot: 0.5
-alpha_jerk: 0.5
+alpha_rot: 1.0
+alpha_jerk: 1.0
+
+k_vel: 1.0
+alpha_rot_vel: 1.0
+alpha_v: 1.0
+alpha_acc: 1.0
+alpha_jerk_vel: 1.0
