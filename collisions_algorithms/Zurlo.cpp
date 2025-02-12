@@ -2,10 +2,10 @@
 
 Zurlo::Zurlo(void) {}
 
-void Zurlo::setValues(int n, double k, int jointNumber) 
+void Zurlo::setValues(int n, int jointNumber, double kNiblack, double kCusum, bool useNiblackThreshold, bool useCusumThreshold)
 {
     windowSize = n;
-    sensitivityThreshold = k;
+    sensitivityThresholdNiblack = kNiblack;
     jointNumber_ = jointNumber;
     base_high_threshold = 0.0;
     base_low_threshold = 0.0;
@@ -22,11 +22,28 @@ void Zurlo::setValues(int n, double k, int jointNumber)
     residual_current_.setZero(jointNumber);
     residual_energy_ = 0.0;
     zurloEstimationControlFlag_ = false;
-    zurloNiblackThreshold_residual_.setValues(windowSize, sensitivityThreshold, jointNumber);
-    zurloNiblackThreshold_residual_current_.setValues(windowSize, sensitivityThreshold, jointNumber);
-    zurloNiblackThreshold_residual_energy_.setValues(windowSize, sensitivityThreshold, 1);
+
+    zurloNiblackThreshold_residual_.setValues(windowSize, sensitivityThresholdNiblack, jointNumber);
+    zurloNiblackThreshold_residual_current_.setValues(windowSize, sensitivityThresholdNiblack, jointNumber);
+    zurloNiblackThreshold_residual_energy_.setValues(windowSize, sensitivityThresholdNiblack, 1);
+    
+    zurloCusumThreshold_residual_.setValues(sensitivityThresholdCusum, jointNumber);
+    zurloCusumThreshold_residual_current_.setValues(sensitivityThresholdCusum, jointNumber);
+    zurloCusumThreshold_residual_energy_.setValues(sensitivityThresholdCusum, 1);
+
+    alpha_ = 0.5;
+    beta_ = 0.5;
+
+    zurloLpfThreshold_residual_.setValues(alpha_, beta_, jointNumber);
+    zurloLpfThreshold_residual_current_.setValues(alpha_, beta_, jointNumber);
+    zurloLpfThreshold_residual_energy_.setValues(alpha_, beta_, 1);
+
     detection_zurlo_current_ = false;
     detection_zurlo_torque_ = false;
+
+    useNiblackThreshold_ = useNiblackThreshold;
+    useCusumThreshold_ = useCusumThreshold;
+    useLpfThreshold_ = false;
 }
 
 bool Zurlo::collisionDetection(mc_control::MCGlobalController & ctl)
@@ -70,6 +87,7 @@ bool Zurlo::collisionDetection(mc_control::MCGlobalController & ctl)
                 if(zurloEstimationControlFlag_)
                 {
                     mc_rtc::log::info("Obstacle detected with Zurlo estimation");
+                    resetThresholds();
                     return true;
                 }
                 }
@@ -82,6 +100,7 @@ bool Zurlo::collisionDetection(mc_control::MCGlobalController & ctl)
                 if(zurloEstimationControlFlag_)
                 {
                     mc_rtc::log::info("Obstacle detected with Zurlo estimation");
+                    resetThresholds();
                     return true;
                 }
                 }
@@ -91,13 +110,56 @@ bool Zurlo::collisionDetection(mc_control::MCGlobalController & ctl)
     
 
     // Update the thresholds
-    residual_high_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_high_threshold, residual_, true);
-    residual_current_high_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_high_threshold, residual_current_, true);
-    residual_energy_high_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_high_threshold, residual_energy_, true);
-    residual_low_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_low_threshold, residual_, false);
-    residual_current_low_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_low_threshold, residual_current_, false);
-    residual_energy_low_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_low_threshold, residual_energy_, false);
+    if(useNiblackThreshold_)
+    {
+        residual_high_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_high_threshold, residual_, true);
+        residual_current_high_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_high_threshold, residual_current_, true);
+        residual_energy_high_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_high_threshold, residual_energy_, true);
+        residual_low_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_low_threshold, residual_, false);
+        residual_current_low_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_low_threshold, residual_current_, false);
+        residual_energy_low_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_low_threshold, residual_energy_, false);
+    }
+    else if(useCusumThreshold_)
+    {
+        residual_high_threshold = zurloCusumThreshold_residual_.adaptiveThreshold(residual_high_threshold, residual_, true);
+        residual_current_high_threshold = zurloCusumThreshold_residual_current_.adaptiveThreshold(residual_current_high_threshold, residual_current_, true);
+        residual_energy_high_threshold = zurloCusumThreshold_residual_energy_.adaptiveThreshold(residual_energy_high_threshold, residual_energy_, true);
+        residual_low_threshold = zurloCusumThreshold_residual_.adaptiveThreshold(residual_low_threshold, residual_, false);
+        residual_current_low_threshold = zurloCusumThreshold_residual_current_.adaptiveThreshold(residual_current_low_threshold, residual_current_, false);
+        residual_energy_low_threshold = zurloCusumThreshold_residual_energy_.adaptiveThreshold(residual_energy_low_threshold, residual_energy_, false);
+    }
+    else if(useLpfThreshold_)
+    {
+        residual_high_threshold = zurloLpfThreshold_residual_.adaptiveThreshold(residual_, true);
+        residual_current_high_threshold = zurloLpfThreshold_residual_current_.adaptiveThreshold(residual_current_, true);
+        residual_energy_high_threshold = zurloLpfThreshold_residual_energy_.adaptiveThreshold(residual_energy_, true);
+        residual_low_threshold = zurloLpfThreshold_residual_.adaptiveThreshold(residual_, false);
+        residual_current_low_threshold = zurloLpfThreshold_residual_current_.adaptiveThreshold(residual_current_, false);
+        residual_energy_low_threshold = zurloLpfThreshold_residual_energy_.adaptiveThreshold(residual_energy_, false);
+    }
+    else
+    {
+        mc_rtc::log::error("[ObstacleDetectionJerkEstimator] No threshold method selected");
+    }
     return false;
+}
+
+void Zurlo::resetThresholds(void)
+{
+    base_high_threshold = 0.0;
+    base_low_threshold = 0.0;
+    residual_high_threshold.setConstant(jointNumber_, base_high_threshold);
+    residual_low_threshold.setConstant(jointNumber_, base_low_threshold);
+    residual_current_high_threshold.setConstant(jointNumber_, base_high_threshold);
+    residual_current_low_threshold.setConstant(jointNumber_, base_low_threshold);
+    residual_energy_high_threshold = base_high_threshold;
+    residual_energy_low_threshold = base_low_threshold;
+    zurloNiblackThreshold_residual_.reset();
+    zurloNiblackThreshold_residual_current_.reset();
+    zurloNiblackThreshold_residual_energy_.reset();
+    zurloCusumThreshold_residual_.resetCusum();
+    zurloCusumThreshold_residual_current_.resetCusum();
+    zurloCusumThreshold_residual_energy_.resetCusum();
 }
 
 void Zurlo::addPlot(std::vector<std::string> & plots, double counter,  mc_control::MCGlobalController & ctl)
@@ -151,24 +213,84 @@ void Zurlo::addGui(mc_control::MCGlobalController & ctl)
         mc_rtc::gui::Checkbox(
             "Zurlo Estimation for collision detection", [this]() { return zurloEstimationFlag_; }, [this](){zurloEstimationFlag_ = !zurloEstimationFlag_;}));
       
-      gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Zurlo Estimation stop the system when a collision is detected", [this]() { return zurloEstimationControlFlag_; }, [this](){zurloEstimationControlFlag_ = !zurloEstimationControlFlag_;}));
+    
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Zurlo Estimation use residual", [this]() { return zurloUse_residual_; }, [this](){zurloUse_residual_ = !zurloUse_residual_;}));
+    
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Zurlo Estimation use residual current", [this]() { return zurloUse_residual_current_; }, [this](){zurloUse_residual_current_ = !zurloUse_residual_current_;}));
+    
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::NumberInput(
+        "Zurlo Niblack Threshold Sensitivity", [this]() { return this->sensitivityThresholdNiblack; },
+        [this](double threshold)
+        {
+            sensitivityThresholdNiblack = threshold;
+            zurloNiblackThreshold_residual_.sensitivityThreshold = threshold;
+            zurloNiblackThreshold_residual_current_.sensitivityThreshold = threshold;
+            zurloNiblackThreshold_residual_energy_.sensitivityThreshold = threshold;
+            resetThresholds();
+        }));
+
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::NumberInput(
+        "Zurlo Cusum Threshold Sensitivity", [this]() { return this->sensitivityThresholdCusum; },
+        [this](double threshold)
+        {
+            sensitivityThresholdCusum = threshold;
+            zurloCusumThreshold_residual_.sensitivityThreshold = threshold;
+            zurloCusumThreshold_residual_current_.sensitivityThreshold = threshold;
+            zurloCusumThreshold_residual_energy_.sensitivityThreshold = threshold;
+            resetThresholds();
+        }));
+
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::NumberInput(
+        "Zurlo Lpf Threshold Alpha", [this]() { return this->alpha_; },
+        [this](double alpha)
+        {
+            alpha_ = alpha;
+            zurloLpfThreshold_residual_.alpha_ = alpha;
+            zurloLpfThreshold_residual_current_.alpha_ = alpha;
+            zurloLpfThreshold_residual_energy_.alpha_ = alpha;
+        }));
+
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::NumberInput(
+        "Zurlo Lpf Threshold Beta", [this]() { return this->beta_; },
+        [this](double beta)
+        {
+            beta_ = beta;
+            zurloLpfThreshold_residual_.beta_ = beta;
+            zurloLpfThreshold_residual_current_.beta_ = beta;
+            zurloLpfThreshold_residual_energy_.beta_ = beta;
+        }));
+
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
         mc_rtc::gui::Checkbox(
-            "Zurlo Estimation stop the system when a collision is detected", [this]() { return zurloEstimationControlFlag_; }, [this](){zurloEstimationControlFlag_ = !zurloEstimationControlFlag_;}));
-      
-      gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+            "Zurlo use Niblack Threshold", [this]() { return useNiblackThreshold_; }, [this](){
+                useNiblackThreshold_ = !useNiblackThreshold_;
+                if(useCusumThreshold_) useCusumThreshold_ = false;
+                if(useLpfThreshold_) useLpfThreshold_ = false;
+            }));
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
         mc_rtc::gui::Checkbox(
-            "Zurlo Estimation use residual", [this]() { return zurloUse_residual_; }, [this](){zurloUse_residual_ = !zurloUse_residual_;}));
-      
-      gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+            "Zurlo use Cusum Threshold", [this]() { return useCusumThreshold_; }, [this](){
+                useCusumThreshold_ = !useCusumThreshold_;
+                if(useNiblackThreshold_) useNiblackThreshold_ = false;
+                if(useLpfThreshold_) useLpfThreshold_ = false;
+            }));
+    gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
         mc_rtc::gui::Checkbox(
-            "Zurlo Estimation use residual current", [this]() { return zurloUse_residual_current_; }, [this](){zurloUse_residual_current_ = !zurloUse_residual_current_;}));
-      
-      gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
-        mc_rtc::gui::NumberInput(
-            "Zurlo Obstacle Threshold Sensitivity", [this]() { return this->sensitivityThreshold; },
-            [this](double threshold)
-            {
-              sensitivityThreshold = threshold;
+            "Zurlo use Lpf Threshold", [this]() { return useLpfThreshold_; }, [this](){
+                useLpfThreshold_ = !useLpfThreshold_;
+                if(useNiblackThreshold_) useNiblackThreshold_ = false;
+                if(useCusumThreshold_) useCusumThreshold_ = false;
             }));
 }
 

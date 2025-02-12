@@ -9,6 +9,7 @@ public:
     NiblackThreshold(void);
 
     void setValues(int n, double k, int jointNumber);
+    void reset(void);
     int windowSize;
 
     double sensitivityThreshold;

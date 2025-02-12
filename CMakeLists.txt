@@ -22,12 +22,16 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ObstacleDetectionJerkEstimator.ya
 set(plugin_SRC 
   src/ObstacleDetectionJerkEstimator.cpp
   thresholds/NiblackThreshold.cpp
+  thresholds/CusumThreshold.cpp
+  thresholds/LpfThreshold.cpp
   collisions_algorithms/Zurlo.cpp
   )
 
 set(plugin_HDR 
   src/ObstacleDetectionJerkEstimator.h
   thresholds/NiblackThreshold.h
+  thresholds/CusumThreshold.h
+  thresholds/LpfThreshold.h
   collisions_algorithms/Zurlo.h
   )
 

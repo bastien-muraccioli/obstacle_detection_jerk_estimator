@@ -149,7 +149,8 @@ private:
   // Dario Zurlo estimation
   Zurlo zurlo_;
   int windowSize;             // Size of the sliding window
-  double sensitivityThreshold;                   // Sensitivity factor
+  double sensitivityThresholdNiblack;        
+  double sensitivityThresholdCusum;
 
   // Detection observer
   bool detection_jerk_base_;

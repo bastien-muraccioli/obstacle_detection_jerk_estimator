@@ -15,4 +15,5 @@ alpha_acc: 1.0
 alpha_jerk_vel: 1.0
 
 windowSize: 5000
-sensitivityThreshold: 8
+sensitivityThresholdNiblack: 8
+sensitivityThresholdCusum: 0.5

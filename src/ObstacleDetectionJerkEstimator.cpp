@@ -152,12 +152,17 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   {
     windowSize = config("windowSize");
   }
-  sensitivityThreshold = 2.0;
-  if(config.has("sensitivityThreshold"))
+  sensitivityThresholdNiblack = 8.0;
+  if(config.has("sensitivityThresholdNiblack"))
   {
-    sensitivityThreshold = config("sensitivityThreshold");
+    sensitivityThresholdNiblack = config("sensitivityThresholdNiblack");
   }
-  zurlo_.setValues(windowSize, sensitivityThreshold, jointNumber_);
+  sensitivityThresholdCusum = 0.5;
+  if(config.has("sensitivityThresholdCusum"))
+  {
+    sensitivityThresholdCusum = config("sensitivityThresholdCusum");
+  }
+  zurlo_.setValues(windowSize, jointNumber_, sensitivityThresholdNiblack, sensitivityThresholdCusum);
 
   addGui(ctl);
   addLog(ctl);

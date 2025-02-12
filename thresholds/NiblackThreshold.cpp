@@ -75,3 +75,8 @@ Eigen::VectorXd NiblackThreshold::computeStdDev(Eigen::VectorXd mean) {
     }
     return (sumSq / (window.size() - 1)).cwiseSqrt();
 }
+
+void NiblackThreshold::reset(void) {
+    window.clear();
+    window_d.clear();
+}
