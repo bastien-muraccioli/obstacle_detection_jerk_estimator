@@ -13,6 +13,10 @@
 #include <RBDyn/FK.h>
 #include <RBDyn/FV.h>
 #include <RBDyn/FA.h>
+#include "../thresholds/NiblackThreshold.h"
+// #include <iostream>
+// #include <deque>
+// #include <cmath>
 
 namespace mc_plugin
 {
@@ -34,10 +38,16 @@ struct ObstacleDetectionJerkEstimator : public mc_control::GlobalPlugin
   void addPlot(mc_control::MCGlobalController & ctl);
   void removePlot(mc_control::MCGlobalController & ctl);
 
+
+  void jerkEstimation(mc_control::MCGlobalController & ctl);
+  void jerkEstimationInit(mc_control::MCGlobalController & ctl);
   void jerkEstimationBase(mc_control::MCGlobalController & ctl);
   void jerkEstimationWithLinearVelocity(mc_control::MCGlobalController & ctl);
   void jerkEstimationWithoutModel(mc_control::MCGlobalController & ctl);
   void jerkEstimationFromQP(mc_control::MCGlobalController & ctl);
+  void zurloEstimation(mc_control::MCGlobalController & ctl);
+  Eigen::VectorXd adaptiveThreshold(const Eigen::VectorXd& prevThreshold, const Eigen::VectorXd& newSignal, bool high, std::deque<Eigen::VectorXd>& window);
+  double adaptiveThreshold(double prevThreshold, double newSignal, bool high, std::deque<double>& window);
 
   std::string getEstimationType(void);
   void setEstimationType(std::string type);
@@ -47,7 +57,7 @@ struct ObstacleDetectionJerkEstimator : public mc_control::GlobalPlugin
     Base,
     WithLinearVelocity,
     WithoutModel,
-    FromQP
+    FromQP,
   };
 
   ~ObstacleDetectionJerkEstimator() override;
@@ -59,8 +69,9 @@ private:
   int internal_counter_; // Internal counter
   std::string imuBodyName_; // Name of the IMU sensor
   std::string robotBodyName_;
-  std::string bodySensor_name_ ;
-
+  std::string bodySensor_name_;
+  bool isIMU_;
+  int jointNumber_;
   int estimationType_; // Type of jerk estimation: 0 -> base, 1 -> with linear velocity, 2 -> without model, 3 -> from QP
 
   // Gains
@@ -81,6 +92,7 @@ private:
   bool obstacle_detected_; // Flag to indicate if an obstacle is detected
   bool obstacle_detection_has_changed_; // Flag to indicate if the obstacle detection has changed
 
+  bool jerkEstimationFlag_;
   bool jerkEstimationBaseFlag_;
   bool jerkEstimationWithLinearVelocityFlag_;
   bool jerkEstimationWithoutModelFlag_;
@@ -124,7 +136,6 @@ private:
   Eigen::Vector3d jerk_qp_;
   Eigen::Vector3d jerk_diff_baseQp_; 
   
-
   // Estimation including the linear velocity
   Eigen::Vector3d bias_gyro_vel_; // Gyro bias derivative including the linear velocity
   Eigen::Vector3d bias_gyro_dot_vel_; // Gyro bias derivative including the linear velocity
@@ -141,6 +152,43 @@ private:
   Eigen::Vector3d acc_vel_; // Linear acceleration including the linear velocity
   Eigen::Vector3d acc_dot_vel_; // Derivative of the linear acceleration including the linear velocity
   
+  // Dario Zurlo estimation
+  double base_high_threshold = 50.0;
+  double base_low_threshold = -50.0;
+  Eigen::VectorXd residual_high_threshold;
+  Eigen::VectorXd residual_low_threshold;
+  Eigen::VectorXd residual_current_high_threshold;
+  Eigen::VectorXd residual_current_low_threshold;
+  double residual_energy_high_threshold;
+  double residual_energy_low_threshold;
+  bool zurloEstimationFlag_;
+  bool zurloUse_residual_;
+  bool zurloUse_residual_current_;
+  Eigen::VectorXd residual_;
+  Eigen::VectorXd residual_current_;
+  double residual_energy_;
+  bool zurloEstimationControlFlag_;
+  // std::deque<double> window_energy_residual;  // Sliding window buffer
+  // std::deque<Eigen::VectorXd> window_residual;  // Sliding window buffer
+  // std::deque<Eigen::VectorXd> window_residual_current;  // Sliding window buffer
+  int windowSize;             // Size of the sliding window
+  double sensitivityThreshold;                   // Sensitivity factor
+  // double computeMean(const std::deque<double>& window);       // Compute the mean of the sliding window
+  // double computeStdDev(double mean, const std::deque<double>& window);     // Compute the standard deviation of the sliding window
+  // Eigen::VectorXd computeMean(const std::deque<Eigen::VectorXd>& window); 
+  // Eigen::VectorXd computeStdDev(const Eigen::VectorXd& mean, const std::deque<Eigen::VectorXd>& window);
+
+  // Detection observer
+  bool detection_jerk_base_;
+  bool detection_jerk_vel_;
+  bool detection_jerk_withoutModel_;
+  bool detection_jerk_qp_;
+  bool detection_zurlo_current_;
+  bool detection_zurlo_torque_;
+
+  NiblackThreshold zurloNiblackThreshold_residual_;
+  NiblackThreshold zurloNiblackThreshold_residual_current_;
+  NiblackThreshold zurloNiblackThreshold_residual_energy_;
 };
 
 } // namespace mc_plugin

@@ -13,3 +13,6 @@ alpha_rot_vel: 1.0
 alpha_v: 1.0
 alpha_acc: 1.0
 alpha_jerk_vel: 1.0
+
+windowSize: 5000
+sensitivityThreshold: 5

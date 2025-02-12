@@ -31,6 +31,8 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   auto & realRobot = ctl.realRobot();
 
   estimationType_ = EstimationType::Base;
+
+  jointNumber_ = ctl.robot(ctl.robots()[0].name()).refJointOrder().size();
   
   // Flags
   imu_not_yet_initialized_ = true;
@@ -44,6 +46,19 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   jerkEstimationWithLinearVelocityFlag_ = true;
   jerkEstimationWithoutModelFlag_ = true;
   jerkEstimationFromQPFlag_ = true;
+  jerkEstimationFlag_ = true;
+  zurloEstimationFlag_ = false;
+  zurloEstimationControlFlag_ = false;
+  zurloUse_residual_ = false;
+  zurloUse_residual_current_ = true;
+
+  // Detection observer
+  detection_jerk_base_ = false;
+  detection_jerk_vel_ = false;
+  detection_jerk_withoutModel_ = false;
+  detection_jerk_qp_ = false;
+  detection_zurlo_current_ = false;
+  detection_zurlo_torque_ = false;
 
   ctl.controller().datastore().make_call("ObstacleDetectionJerkEstimator::ResetPlot", [this]() {
       this->reset_plot_flag_ = true;
@@ -69,7 +84,6 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   alpha_jerk_vel_ = 1.0;
   alpha_acc_ = 1.0;
   
-
   imuBodyName_ = "Accelerometer";
   robotBodyName_ = "FT_sensor_mounting";
 
@@ -127,73 +141,42 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
     setEstimationType(config("estimationType"));
   }
 
-  // bodySensor_name_ = "JerkEstimator";
 
-  // if(!controller.controller().robot().hasBodySensor(bodySensor_name_))
-  // {
-  //   mc_rtc::log::info("[RosImuSensor] Body sensor {} does not exist in the robot. Creating Body Sensor...", bodySensor_name_);
-  //   // Create the body sensor
-  //   mc_rbdyn::BodySensor imu_sensor(bodySensor_name_, robotBodyName_, sva::PTransformd::Identity());
-  //   // Add the body sensor to the robot
-  //   controller.controller().robot().addBodySensor(imu_sensor);
-  // }
-  // else
-  // {
-  //   mc_rtc::log::info("[RosImuSensor] Body sensor {} found in the robot", bodySensor_name_);
-  // }
+  if(robot.hasBodySensor(imuBodyName_))
+  {
+    jerkEstimationInit(ctl);
+    isIMU_ = true;
+  }
+  else {
+    isIMU_ = false;
+    mc_rtc::log::error("The IMU sensor {} does not exist in the robot", imuBodyName_);
+  }
 
-  const auto & imu = robot.bodySensor(imuBodyName_);
-  rbd::forwardKinematics(realRobot.mb(), realRobot.mbc());
-  rbd::forwardVelocity(realRobot.mb(), realRobot.mbc());
-  rbd::forwardAcceleration(realRobot.mb(), realRobot.mbc());
+  // Zurlo estimation
+  residual_high_threshold.setConstant(jointNumber_, base_high_threshold);
+  residual_current_high_threshold.setConstant(jointNumber_, base_high_threshold);
+  residual_energy_high_threshold = base_high_threshold;
+  residual_low_threshold.setConstant(jointNumber_, base_low_threshold);
+  residual_current_low_threshold.setConstant(jointNumber_, base_low_threshold);
+  residual_energy_low_threshold = base_low_threshold;
+  residual_.setZero(jointNumber_);
+  residual_current_.setZero(jointNumber_);
+  residual_energy_ = 0.0;
 
-  // Initializing variables
-  accelero_dot_ = Eigen::Vector3d::Zero();
-  accelero_dot_dot_ = Eigen::Vector3d::Zero();
-  prev_accelero_dot_ = Eigen::Vector3d::Zero();
-  gyro_dot_ = Eigen::Vector3d::Zero();
+  windowSize = 100;
+  if(config.has("windowSize"))
+  {
+    windowSize = config("windowSize");
+  }
+  sensitivityThreshold = 2.0;
+  if(config.has("sensitivityThreshold"))
+  {
+    sensitivityThreshold = config("sensitivityThreshold");
+  }
 
-  R_rob_ = realRobot.bodyPosW(robotBodyName_).rotation().transpose();
-  quat_R_rob_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_));
-
-  v_encoders_ = realRobot.bodyVelW(robotBodyName_).linear();
-
-  // Initialize the estimation without the model
-  jerk_withoutModel_ = Eigen::Vector3d::Zero();
-  jerk_dot_withoutModel_ = Eigen::Vector3d::Zero();
-  jerk_withoutModel_noFiltration_ = Eigen::Vector3d::Zero();
-  jerk_diff_baseNoModel_ = Eigen::Vector3d::Zero();
-
-  // Initialize the base estimation
-  bias_gyro_base_ = Eigen::Vector3d::Zero();
-  bias_gyro_dot_base_ = Eigen::Vector3d::Zero();
-  R_base_ = R_rob_;
-  quat_tilde_base_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_*R_base_.transpose()));
-  quat_R_base_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_base_));
-  omega_base_ = Eigen::Vector3d::Zero();
-  jerk_base_ = Eigen::Vector3d::Zero();
-  jerk_dot_base_ = Eigen::Vector3d::Zero();
-
-  // Initialize the estimation from the QP
-  acc_qp_ = Eigen::Vector3d::Zero();
-  jerk_qp_ = Eigen::Vector3d::Zero();
-  jerk_diff_baseQp_ = Eigen::Vector3d::Zero();
-
-  // Initialize the estimation including the linear velocity
-  bias_gyro_vel_ = Eigen::Vector3d::Zero();
-  bias_gyro_dot_vel_ = Eigen::Vector3d::Zero();
-  R_vel_ = R_rob_;
-  quat_tilde_vel_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_*R_vel_.transpose()));
-  quat_R_vel_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_vel_));
-  omega_acceleroAndEncVel_ = Eigen::Vector3d::Zero();
-  omega_vel_ = Eigen::Vector3d::Zero();
-  jerk_vel_ = Eigen::Vector3d::Zero();
-  jerk_dot_vel_ = Eigen::Vector3d::Zero();
-  v_vel_ = Eigen::Vector3d::Zero();
-  v_dot_vel_ = Eigen::Vector3d::Zero();
-  v_dot_accelero_ = Eigen::Vector3d::Zero();
-  acc_vel_ = Eigen::Vector3d::Zero();
-  acc_dot_vel_ = Eigen::Vector3d::Zero();
+  zurloNiblackThreshold_residual_.setValues(windowSize, sensitivityThreshold, jointNumber_);
+  zurloNiblackThreshold_residual_current_.setValues(windowSize, sensitivityThreshold, jointNumber_);
+  zurloNiblackThreshold_residual_energy_.setValues(windowSize, sensitivityThreshold, 1);
 
   // removePlot(ctl);
   addGui(ctl);
@@ -210,96 +193,25 @@ void ObstacleDetectionJerkEstimator::reset(mc_control::MCGlobalController & cont
 void ObstacleDetectionJerkEstimator::before(mc_control::MCGlobalController & controller)
 {
   auto & ctl = static_cast<mc_control::MCGlobalController &>(controller);
-  auto & robot = ctl.robot();
-  auto & realRobot = ctl.realRobot();
-  const mc_rbdyn::BodySensor & imu = robot.bodySensor(imuBodyName_);
+  auto & realRobot = ctl.realRobot(ctl.robots()[0].name());
+  Eigen::VectorXd qdot(jointNumber_);
+  rbd::paramToVector(realRobot.alpha(), qdot);
 
-  rbd::forwardKinematics(realRobot.mb(), realRobot.mbc());
-  rbd::forwardVelocity(realRobot.mb(), realRobot.mbc());
-  rbd::forwardAcceleration(realRobot.mb(), realRobot.mbc());
-
-  if(imu.linearAcceleration().norm() != 0.0 && imu.angularVelocity().norm() != 0.0 && imu_not_yet_initialized_)
+  obstacle_detected_ = false;
+  if(isIMU_ && jerkEstimationFlag_)
   {
-    imu_not_yet_initialized_ = false;
-    accelero_ = imu.linearAcceleration();
-    gyro_ = imu.angularVelocity();
+    jerkEstimation(ctl);
   }
-
-  if(imu_not_yet_initialized_)
+  if(zurloEstimationFlag_&& qdot.any() > 0.1)
   {
-    return;
+    zurloEstimation(ctl);
   }
   
-  // IMU measurements
-  prev_gyro_ = gyro_; 
-  gyro_ = imu.angularVelocity();
-  const Eigen::Vector3d gyro_dot = (gyro_ - prev_gyro_)/dt_;
-  prev_accelero_ = accelero_;
-  accelero_ = imu.linearAcceleration();
-  prev_accelero_dot_ = accelero_dot_;
-  accelero_dot_ = (accelero_- prev_accelero_)/dt_;
-  accelero_dot_dot_ = (accelero_dot_ - prev_accelero_dot_)/dt_;
-
-
-  // Rotation matrix model
-  R_rob_ = realRobot.bodyPosW(robotBodyName_).rotation().transpose();
-  quat_R_rob_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_));
-
-  // Velocity from the robot model
-  v_encoders_ = realRobot.bodyVelW(robotBodyName_).linear();
-
-  if(jerkEstimationBaseFlag_)
-  {
-    jerkEstimationBase(ctl);
-  }
-  if(jerkEstimationWithLinearVelocityFlag_)
-  {
-    jerkEstimationWithLinearVelocity(ctl);
-  }
-  if(jerkEstimationWithoutModelFlag_)
-  {
-    jerkEstimationWithoutModel(ctl);
-  }
-  if(jerkEstimationFromQPFlag_)
-  {
-    jerkEstimationFromQP(ctl);
-  }
-
-  double jerk_norm = 0.0;
-
-  switch (estimationType_) {
-    case EstimationType::Base:
-      jerk_norm = jerk_base_.norm();
-      break;
-    case EstimationType::WithLinearVelocity:
-      jerk_norm = jerk_vel_.norm();
-      break;
-    case EstimationType::WithoutModel:
-      jerk_norm = jerk_withoutModel_.norm();
-      break;
-    case EstimationType::FromQP:
-      jerk_norm = jerk_qp_.norm();
-      break;
-  }
-
-
-  // Check if an obstacle is detected
-  if(jerk_norm > obstacle_threshold_ && collision_stop_activated_)
-  {
-    obstacle_detected_ = true;
-  }
-  else
-  {
-    obstacle_detected_ = false;
-  }
-
   if(obstacle_detected_ != obstacle_detection_has_changed_)
   {
     obstacle_detection_has_changed_ = obstacle_detected_;
     ctl.controller().datastore().get<bool>("Obstacle detected") = obstacle_detected_;
   }
-
-  internal_counter_++;
   if(reset_plot_flag_)
   {
     removePlot(ctl);
@@ -311,9 +223,8 @@ void ObstacleDetectionJerkEstimator::before(mc_control::MCGlobalController & con
     removePlot(ctl);
     remove_plot_flag_ = false;
   }
-  // Add the acc_vel_ to the robot acceleration through sensors
-  // ctl.setSensorLinearAccelerations({{bodySensor_name_, v_dot_vel_}});
 
+  internal_counter_++;
 }
 
 void ObstacleDetectionJerkEstimator::after(mc_control::MCGlobalController & controller)
@@ -414,12 +325,51 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
         "acc_qp(t)", [this]() { return acc_qp_.norm(); }, mc_rtc::gui::Color::Magenta)
     );
 
+  //Residual
+  gui.addPlot(
+    plots_[7],
+    mc_rtc::gui::plot::X(
+        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+    mc_rtc::gui::plot::Y(
+        "residual(t)", [this]() { return residual_[0]; }, mc_rtc::gui::Color::Red),
+    mc_rtc::gui::plot::Y(
+        "residual_high_threshold(t)", [this]() { return residual_high_threshold[0]; }, mc_rtc::gui::Color::Green),
+    mc_rtc::gui::plot::Y(
+        "residual_low_threshold(t)", [this]() { return residual_low_threshold[0]; }, mc_rtc::gui::Color::Blue)
+    );
+
+  //Residual current
+  gui.addPlot(
+    plots_[8],
+    mc_rtc::gui::plot::X(
+        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+    mc_rtc::gui::plot::Y(
+        "residual_current(t)", [this]() { return residual_current_[0]; }, mc_rtc::gui::Color::Red),
+    mc_rtc::gui::plot::Y(
+        "residual_current_high_threshold(t)", [this]() { return residual_current_high_threshold[0]; }, mc_rtc::gui::Color::Green),
+    mc_rtc::gui::plot::Y(
+        "residual_current_low_threshold(t)", [this]() { return residual_current_low_threshold[0]; }, mc_rtc::gui::Color::Blue)
+    );
+
+  //Residual energy
+  gui.addPlot(
+    plots_[9],
+    mc_rtc::gui::plot::X(
+        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+    mc_rtc::gui::plot::Y(
+        "residual_energy(t)", [this]() { return residual_energy_; }, mc_rtc::gui::Color::Red),
+    mc_rtc::gui::plot::Y(
+        "residual_energy_high_threshold(t)", [this]() { return residual_energy_high_threshold; }, mc_rtc::gui::Color::Green),
+    mc_rtc::gui::plot::Y(
+        "residual_energy_low_threshold(t)", [this]() { return residual_energy_low_threshold; }, mc_rtc::gui::Color::Blue)
+    );
+
 }
 
 void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl)
 {
   auto & gui = *ctl.controller().gui();
-  plots_ = {"jerk", "jerk_dot", "omega", "accelero", "R", "velocity", "acceleration"};
+  plots_ = {"jerk", "jerk_dot", "omega", "accelero", "R", "velocity", "acceleration", "residual", "residual_current", "residual_energy"};
 
   gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
     mc_rtc::gui::NumberInput(
@@ -470,6 +420,34 @@ void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl
     );
   gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
     mc_rtc::gui::Checkbox(
+        "Jerk Estimation for collision detection", [this]() { return jerkEstimationFlag_; }, [this](){jerkEstimationFlag_ = !jerkEstimationFlag_;}));
+
+  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Zurlo Estimation for collision detection", [this]() { return zurloEstimationFlag_; }, [this](){zurloEstimationFlag_ = !zurloEstimationFlag_;}));
+  
+  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Zurlo Estimation stop the system when a collision is detected", [this]() { return zurloEstimationControlFlag_; }, [this](){zurloEstimationControlFlag_ = !zurloEstimationControlFlag_;}));
+  
+  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Zurlo Estimation use residual", [this]() { return zurloUse_residual_; }, [this](){zurloUse_residual_ = !zurloUse_residual_;}));
+  
+  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Zurlo Estimation use residual current", [this]() { return zurloUse_residual_current_; }, [this](){zurloUse_residual_current_ = !zurloUse_residual_current_;}));
+  
+  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::NumberInput(
+        "Zurlo Obstacle Threshold Sensitivity", [this]() { return this->sensitivityThreshold; },
+        [this](double threshold)
+        {
+          sensitivityThreshold = threshold;
+        }));
+
+  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
         "Jerk Estimation Base", [this]() { return jerkEstimationBaseFlag_;},[this](){jerkEstimationBaseFlag_ = !jerkEstimationBaseFlag_;}));
   gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
     mc_rtc::gui::Checkbox(
@@ -483,7 +461,7 @@ void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl
     );
   gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
     mc_rtc::gui::ComboInput(
-      "Estimation type for collision detection", {"Base", "With Linear Velocity", "Without Model", "From QP"},
+      "Estimation type for collision detection (Works only if you checked Jerk Estimation)", {"Base", "With Linear Velocity", "Without Model", "From QP", "Zurlo"},
       [this]() {return getEstimationType();},
       [this](const std::string & t){setEstimationType(t);})
     );  
@@ -562,6 +540,23 @@ void ObstacleDetectionJerkEstimator::addLog(mc_control::MCGlobalController & ctl
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_acc_vel_dot", [this]() { return acc_dot_vel_; });
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_acc_vel_dot_norm", [this]() { return acc_dot_vel_.norm(); });
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_obstacleDetected_", [this]() { return obstacle_detected_; });
+
+  // Zurlo estimation
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_high_threshold", [this]() { return residual_high_threshold; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_current_high_threshold", [this]() { return residual_current_high_threshold; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_energy_high_threshold", [this]() { return residual_energy_high_threshold; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_low_threshold", [this]() { return residual_low_threshold; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_current_low_threshold", [this]() { return residual_current_low_threshold; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_energy_low_threshold", [this]() { return residual_energy_low_threshold; });
+
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_base_", [this]() { return detection_jerk_base_; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_vel_", [this]() { return detection_jerk_vel_; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_withoutModel_", [this]() { return detection_jerk_withoutModel_; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_qp_", [this]() { return detection_jerk_qp_; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_zurlo_current_", [this]() { return detection_zurlo_current_; });
+  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_zurlo_torque_", [this]() { return detection_zurlo_torque_; });
+
+
 }
 
 mc_control::GlobalPlugin::GlobalPluginConfiguration ObstacleDetectionJerkEstimator::configuration()
@@ -580,6 +575,157 @@ void ObstacleDetectionJerkEstimator::removePlot(mc_control::MCGlobalController &
   {
     mc_rtc::log::info("Removing plot {}", plot);
     gui.removePlot(plot);
+  }
+}
+
+void ObstacleDetectionJerkEstimator::jerkEstimationInit(mc_control::MCGlobalController & ctl)
+{
+  auto & robot = ctl.robot();
+  auto & realRobot = ctl.realRobot();
+
+  const auto & imu = robot.bodySensor(imuBodyName_);
+  rbd::forwardKinematics(realRobot.mb(), realRobot.mbc());
+  rbd::forwardVelocity(realRobot.mb(), realRobot.mbc());
+  rbd::forwardAcceleration(realRobot.mb(), realRobot.mbc());
+
+  // Initializing variables
+  accelero_dot_ = Eigen::Vector3d::Zero();
+  accelero_dot_dot_ = Eigen::Vector3d::Zero();
+  prev_accelero_dot_ = Eigen::Vector3d::Zero();
+  gyro_dot_ = Eigen::Vector3d::Zero();
+
+  R_rob_ = realRobot.bodyPosW(robotBodyName_).rotation().transpose();
+  quat_R_rob_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_));
+
+  v_encoders_ = realRobot.bodyVelW(robotBodyName_).linear();
+
+  // Initialize the estimation without the model
+  jerk_withoutModel_ = Eigen::Vector3d::Zero();
+  jerk_dot_withoutModel_ = Eigen::Vector3d::Zero();
+  jerk_withoutModel_noFiltration_ = Eigen::Vector3d::Zero();
+  jerk_diff_baseNoModel_ = Eigen::Vector3d::Zero();
+
+  // Initialize the base estimation
+  bias_gyro_base_ = Eigen::Vector3d::Zero();
+  bias_gyro_dot_base_ = Eigen::Vector3d::Zero();
+  R_base_ = R_rob_;
+  quat_tilde_base_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_*R_base_.transpose()));
+  quat_R_base_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_base_));
+  omega_base_ = Eigen::Vector3d::Zero();
+  jerk_base_ = Eigen::Vector3d::Zero();
+  jerk_dot_base_ = Eigen::Vector3d::Zero();
+
+  // Initialize the estimation from the QP
+  acc_qp_ = Eigen::Vector3d::Zero();
+  jerk_qp_ = Eigen::Vector3d::Zero();
+  jerk_diff_baseQp_ = Eigen::Vector3d::Zero();
+
+  // Initialize the estimation including the linear velocity
+  bias_gyro_vel_ = Eigen::Vector3d::Zero();
+  bias_gyro_dot_vel_ = Eigen::Vector3d::Zero();
+  R_vel_ = R_rob_;
+  quat_tilde_vel_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_*R_vel_.transpose()));
+  quat_R_vel_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_vel_));
+  omega_acceleroAndEncVel_ = Eigen::Vector3d::Zero();
+  omega_vel_ = Eigen::Vector3d::Zero();
+  jerk_vel_ = Eigen::Vector3d::Zero();
+  jerk_dot_vel_ = Eigen::Vector3d::Zero();
+  v_vel_ = Eigen::Vector3d::Zero();
+  v_dot_vel_ = Eigen::Vector3d::Zero();
+  v_dot_accelero_ = Eigen::Vector3d::Zero();
+  acc_vel_ = Eigen::Vector3d::Zero();
+  acc_dot_vel_ = Eigen::Vector3d::Zero();
+}
+
+void ObstacleDetectionJerkEstimator::jerkEstimation(mc_control::MCGlobalController & ctl)
+{
+  auto & robot = ctl.robot();
+  auto & realRobot = ctl.realRobot();
+  if(!robot.hasBodySensor(imuBodyName_))
+  {
+    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] Body sensor {} does not exist in the robot. Jerk Estimation is impossible", imuBodyName_);
+    return;
+  }
+  const mc_rbdyn::BodySensor & imu = robot.bodySensor(imuBodyName_);
+
+  rbd::forwardKinematics(realRobot.mb(), realRobot.mbc());
+  rbd::forwardVelocity(realRobot.mb(), realRobot.mbc());
+  rbd::forwardAcceleration(realRobot.mb(), realRobot.mbc());
+
+  if(imu.linearAcceleration().norm() != 0.0 && imu.angularVelocity().norm() != 0.0 && imu_not_yet_initialized_)
+  {
+    imu_not_yet_initialized_ = false;
+    accelero_ = imu.linearAcceleration();
+    gyro_ = imu.angularVelocity();
+  }
+
+  if(imu_not_yet_initialized_)
+  {
+    return;
+  }
+
+  detection_jerk_base_ = false;
+  detection_jerk_vel_ = false;
+  detection_jerk_withoutModel_ = false;
+  detection_jerk_qp_ = false;
+  
+  // IMU measurements
+  prev_gyro_ = gyro_; 
+  gyro_ = imu.angularVelocity();
+  const Eigen::Vector3d gyro_dot = (gyro_ - prev_gyro_)/dt_;
+  prev_accelero_ = accelero_;
+  accelero_ = imu.linearAcceleration();
+  prev_accelero_dot_ = accelero_dot_;
+  accelero_dot_ = (accelero_- prev_accelero_)/dt_;
+  accelero_dot_dot_ = (accelero_dot_ - prev_accelero_dot_)/dt_;
+
+
+  // Rotation matrix model
+  R_rob_ = realRobot.bodyPosW(robotBodyName_).rotation().transpose();
+  quat_R_rob_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_));
+
+  // Velocity from the robot model
+  v_encoders_ = realRobot.bodyVelW(robotBodyName_).linear();
+
+  if(jerkEstimationBaseFlag_)
+  {
+    jerkEstimationBase(ctl);
+  }
+  if(jerkEstimationWithLinearVelocityFlag_)
+  {
+    jerkEstimationWithLinearVelocity(ctl);
+  }
+  if(jerkEstimationWithoutModelFlag_)
+  {
+    jerkEstimationWithoutModel(ctl);
+  }
+  if(jerkEstimationFromQPFlag_)
+  {
+    jerkEstimationFromQP(ctl);
+  }
+
+  double jerk_norm = 0.0;
+
+  switch (estimationType_) {
+    case EstimationType::Base:
+      jerk_norm = jerk_base_.norm();
+      break;
+    case EstimationType::WithLinearVelocity:
+      jerk_norm = jerk_vel_.norm();
+      break;
+    case EstimationType::WithoutModel:
+      jerk_norm = jerk_withoutModel_.norm();
+      break;
+    case EstimationType::FromQP:
+      jerk_norm = jerk_qp_.norm();
+      break;
+  }
+
+  // Check if an obstacle is detected
+  if(jerk_norm > obstacle_threshold_ && collision_stop_activated_)
+  {
+      obstacle_detected_ = true;
+      mc_rtc::log::info("Obstacle detected with jerk estimation");
   }
 }
 
@@ -610,6 +756,11 @@ void ObstacleDetectionJerkEstimator::jerkEstimationBase(mc_control::MCGlobalCont
   quat_tilde_base_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_*R_base_.transpose()));
   // Quaternion of the rotation matrix for logs
   quat_R_base_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_base_));
+
+  if(jerk_base_.norm() > obstacle_threshold_)
+  {
+    detection_jerk_base_ = true;
+  }
 }
 
 void ObstacleDetectionJerkEstimator::jerkEstimationWithLinearVelocity(mc_control::MCGlobalController & ctl)
@@ -646,6 +797,11 @@ void ObstacleDetectionJerkEstimator::jerkEstimationWithLinearVelocity(mc_control
   quat_tilde_vel_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_rob_*R_vel_.transpose()));
   // Quaternion of the rotation matrix for logs
   quat_R_vel_ = stateObservation::kine::rotationVectorToQuaternion(stateObservation::kine::rotationMatrixToRotationVector(R_vel_));
+
+  if(jerk_vel_.norm() > obstacle_threshold_)
+  {
+    detection_jerk_vel_ = true;
+  }
 }
 
 void ObstacleDetectionJerkEstimator::jerkEstimationWithoutModel(mc_control::MCGlobalController & ctl)
@@ -657,6 +813,11 @@ void ObstacleDetectionJerkEstimator::jerkEstimationWithoutModel(mc_control::MCGl
   jerk_withoutModel_ += jerk_dot_withoutModel_*dt_;
 
   jerk_diff_baseNoModel_ = jerk_base_ - jerk_withoutModel_;
+
+  if(jerk_withoutModel_.norm() > obstacle_threshold_)
+  {
+    detection_jerk_withoutModel_ = true;
+  }
 }
 
 void ObstacleDetectionJerkEstimator::jerkEstimationFromQP(mc_control::MCGlobalController & ctl)
@@ -670,6 +831,81 @@ void ObstacleDetectionJerkEstimator::jerkEstimationFromQP(mc_control::MCGlobalCo
 
   jerk_qp_ = R_rob_.transpose()*acc_qp_dot;
   jerk_diff_baseQp_ = jerk_base_ - jerk_qp_;
+
+  if(jerk_qp_.norm() > obstacle_threshold_)
+  {
+    detection_jerk_qp_ = true;
+  }
+}
+
+void ObstacleDetectionJerkEstimator::zurloEstimation(mc_control::MCGlobalController & ctl)
+{
+  detection_zurlo_current_ = false;
+  detection_zurlo_torque_ = false;
+  if(ctl.controller().datastore().has("speed_residual"))
+  {
+    residual_ = ctl.controller().datastore().get<Eigen::VectorXd>("speed_residual");
+  }
+  else
+  {
+    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] The speed_residual is not available in the datastore");
+  }
+  if(ctl.controller().datastore().has("current_residual"))
+  {
+    residual_current_ = ctl.controller().datastore().get<Eigen::VectorXd>("current_residual");
+  }
+  else
+  {
+    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] The current_residual is not available in the datastore");
+  }
+  if(ctl.controller().datastore().has("energy_residual"))
+  {
+    residual_energy_ = ctl.controller().datastore().get<double>("energy_residual");
+  }
+  else
+  {
+    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] The energy_residual is not available in the datastore");
+  }
+
+  if((residual_energy_ > residual_energy_high_threshold) || (residual_energy_ < residual_energy_low_threshold))
+      {
+        for(int i = 0; i < jointNumber_; i++)
+        {
+          if(zurloUse_residual_current_)
+          {
+            if((residual_current_(i) > residual_current_high_threshold(i)) || (residual_current_(i) < residual_current_low_threshold(i)))
+            {
+              detection_zurlo_current_ = true;
+              if(zurloEstimationControlFlag_)
+              {
+                obstacle_detected_ = true;
+                mc_rtc::log::info("Obstacle detected with Zurlo estimation");
+              }
+            }
+          }
+          if(zurloUse_residual_)
+          {
+            if((residual_(i) > residual_high_threshold(i)) || (residual_(i) < residual_low_threshold(i)))
+            {
+              detection_zurlo_torque_ = true;
+              if(zurloEstimationControlFlag_)
+              {
+                obstacle_detected_ = true;
+                mc_rtc::log::info("Obstacle detected with Zurlo estimation");
+              }
+            }
+          }
+        }
+      }
+  
+
+  // Update the thresholds
+  residual_high_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_high_threshold, residual_, true);
+  residual_current_high_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_high_threshold, residual_current_, true);
+  residual_energy_high_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_high_threshold, residual_energy_, true);
+  residual_low_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_low_threshold, residual_, false);
+  residual_current_low_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_low_threshold, residual_current_, false);
+  residual_energy_low_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_low_threshold, residual_energy_, false);
 }
 
 void ObstacleDetectionJerkEstimator::setEstimationType(std::string t)
@@ -690,6 +926,10 @@ void ObstacleDetectionJerkEstimator::setEstimationType(std::string t)
   {
     estimationType_ = EstimationType::FromQP;
   }
+  else
+  {
+    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] The estimation type is not recognized");
+  }
 }
 
 std::string ObstacleDetectionJerkEstimator::getEstimationType()
@@ -704,6 +944,8 @@ std::string ObstacleDetectionJerkEstimator::getEstimationType()
       return "Without Model";
     case EstimationType::FromQP:
       return "From QP";
+    default:
+      return "Base";
   }
 }
 

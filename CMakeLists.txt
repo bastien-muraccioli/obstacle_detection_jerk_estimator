@@ -19,9 +19,15 @@ configure_file(etc/ObstacleDetectionJerkEstimator.in.yaml
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ObstacleDetectionJerkEstimator.yaml"
         DESTINATION "${MC_PLUGINS_RUNTIME_INSTALL_PREFIX}/etc")
 
-set(plugin_SRC src/ObstacleDetectionJerkEstimator.cpp)
+set(plugin_SRC 
+  src/ObstacleDetectionJerkEstimator.cpp
+  thresholds/NiblackThreshold.cpp
+  )
 
-set(plugin_HDR src/ObstacleDetectionJerkEstimator.h)
+set(plugin_HDR 
+  src/ObstacleDetectionJerkEstimator.h
+  thresholds/NiblackThreshold.h
+  )
 
 # The add_plugin macro is provided by mc_rtc
 add_plugin(ObstacleDetectionJerkEstimator ${plugin_SRC} ${plugin_HDR})
