@@ -13,10 +13,7 @@
 #include <RBDyn/FK.h>
 #include <RBDyn/FV.h>
 #include <RBDyn/FA.h>
-#include "../thresholds/NiblackThreshold.h"
-// #include <iostream>
-// #include <deque>
-// #include <cmath>
+#include "../collisions_algorithms/Zurlo.h"
 
 namespace mc_plugin
 {
@@ -45,9 +42,6 @@ struct ObstacleDetectionJerkEstimator : public mc_control::GlobalPlugin
   void jerkEstimationWithLinearVelocity(mc_control::MCGlobalController & ctl);
   void jerkEstimationWithoutModel(mc_control::MCGlobalController & ctl);
   void jerkEstimationFromQP(mc_control::MCGlobalController & ctl);
-  void zurloEstimation(mc_control::MCGlobalController & ctl);
-  Eigen::VectorXd adaptiveThreshold(const Eigen::VectorXd& prevThreshold, const Eigen::VectorXd& newSignal, bool high, std::deque<Eigen::VectorXd>& window);
-  double adaptiveThreshold(double prevThreshold, double newSignal, bool high, std::deque<double>& window);
 
   std::string getEstimationType(void);
   void setEstimationType(std::string type);
@@ -153,42 +147,15 @@ private:
   Eigen::Vector3d acc_dot_vel_; // Derivative of the linear acceleration including the linear velocity
   
   // Dario Zurlo estimation
-  double base_high_threshold = 50.0;
-  double base_low_threshold = -50.0;
-  Eigen::VectorXd residual_high_threshold;
-  Eigen::VectorXd residual_low_threshold;
-  Eigen::VectorXd residual_current_high_threshold;
-  Eigen::VectorXd residual_current_low_threshold;
-  double residual_energy_high_threshold;
-  double residual_energy_low_threshold;
-  bool zurloEstimationFlag_;
-  bool zurloUse_residual_;
-  bool zurloUse_residual_current_;
-  Eigen::VectorXd residual_;
-  Eigen::VectorXd residual_current_;
-  double residual_energy_;
-  bool zurloEstimationControlFlag_;
-  // std::deque<double> window_energy_residual;  // Sliding window buffer
-  // std::deque<Eigen::VectorXd> window_residual;  // Sliding window buffer
-  // std::deque<Eigen::VectorXd> window_residual_current;  // Sliding window buffer
+  Zurlo zurlo_;
   int windowSize;             // Size of the sliding window
   double sensitivityThreshold;                   // Sensitivity factor
-  // double computeMean(const std::deque<double>& window);       // Compute the mean of the sliding window
-  // double computeStdDev(double mean, const std::deque<double>& window);     // Compute the standard deviation of the sliding window
-  // Eigen::VectorXd computeMean(const std::deque<Eigen::VectorXd>& window); 
-  // Eigen::VectorXd computeStdDev(const Eigen::VectorXd& mean, const std::deque<Eigen::VectorXd>& window);
 
   // Detection observer
   bool detection_jerk_base_;
   bool detection_jerk_vel_;
   bool detection_jerk_withoutModel_;
   bool detection_jerk_qp_;
-  bool detection_zurlo_current_;
-  bool detection_zurlo_torque_;
-
-  NiblackThreshold zurloNiblackThreshold_residual_;
-  NiblackThreshold zurloNiblackThreshold_residual_current_;
-  NiblackThreshold zurloNiblackThreshold_residual_energy_;
 };
 
 } // namespace mc_plugin

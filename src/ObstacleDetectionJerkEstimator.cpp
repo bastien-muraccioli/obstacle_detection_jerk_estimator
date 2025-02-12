@@ -47,18 +47,12 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   jerkEstimationWithoutModelFlag_ = true;
   jerkEstimationFromQPFlag_ = true;
   jerkEstimationFlag_ = true;
-  zurloEstimationFlag_ = false;
-  zurloEstimationControlFlag_ = false;
-  zurloUse_residual_ = false;
-  zurloUse_residual_current_ = true;
 
   // Detection observer
   detection_jerk_base_ = false;
   detection_jerk_vel_ = false;
   detection_jerk_withoutModel_ = false;
   detection_jerk_qp_ = false;
-  detection_zurlo_current_ = false;
-  detection_zurlo_torque_ = false;
 
   ctl.controller().datastore().make_call("ObstacleDetectionJerkEstimator::ResetPlot", [this]() {
       this->reset_plot_flag_ = true;
@@ -153,16 +147,6 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   }
 
   // Zurlo estimation
-  residual_high_threshold.setConstant(jointNumber_, base_high_threshold);
-  residual_current_high_threshold.setConstant(jointNumber_, base_high_threshold);
-  residual_energy_high_threshold = base_high_threshold;
-  residual_low_threshold.setConstant(jointNumber_, base_low_threshold);
-  residual_current_low_threshold.setConstant(jointNumber_, base_low_threshold);
-  residual_energy_low_threshold = base_low_threshold;
-  residual_.setZero(jointNumber_);
-  residual_current_.setZero(jointNumber_);
-  residual_energy_ = 0.0;
-
   windowSize = 100;
   if(config.has("windowSize"))
   {
@@ -173,12 +157,8 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   {
     sensitivityThreshold = config("sensitivityThreshold");
   }
+  zurlo_.setValues(windowSize, sensitivityThreshold, jointNumber_);
 
-  zurloNiblackThreshold_residual_.setValues(windowSize, sensitivityThreshold, jointNumber_);
-  zurloNiblackThreshold_residual_current_.setValues(windowSize, sensitivityThreshold, jointNumber_);
-  zurloNiblackThreshold_residual_energy_.setValues(windowSize, sensitivityThreshold, 1);
-
-  // removePlot(ctl);
   addGui(ctl);
   addLog(ctl);
 
@@ -202,9 +182,9 @@ void ObstacleDetectionJerkEstimator::before(mc_control::MCGlobalController & con
   {
     jerkEstimation(ctl);
   }
-  if(zurloEstimationFlag_&& qdot.any() > 0.1)
+  if(zurlo_.zurloEstimationFlag_&& qdot.any() > 0.1)
   {
-    zurloEstimation(ctl);
+    obstacle_detected_ = zurlo_.collisionDetection(ctl);
   }
   
   if(obstacle_detected_ != obstacle_detection_has_changed_)
@@ -225,6 +205,7 @@ void ObstacleDetectionJerkEstimator::before(mc_control::MCGlobalController & con
   }
 
   internal_counter_++;
+  zurlo_.updateCounter(internal_counter_ * dt_);
 }
 
 void ObstacleDetectionJerkEstimator::after(mc_control::MCGlobalController & controller)
@@ -235,6 +216,7 @@ void ObstacleDetectionJerkEstimator::after(mc_control::MCGlobalController & cont
 void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ctl)
 {
   auto & gui = *ctl.controller().gui();
+  double counter = static_cast<double>(internal_counter_) * dt_;
   gui.addPlot(
       plots_[0],
       mc_rtc::gui::plot::X(
@@ -325,45 +307,7 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
         "acc_qp(t)", [this]() { return acc_qp_.norm(); }, mc_rtc::gui::Color::Magenta)
     );
 
-  //Residual
-  gui.addPlot(
-    plots_[7],
-    mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
-    mc_rtc::gui::plot::Y(
-        "residual(t)", [this]() { return residual_[0]; }, mc_rtc::gui::Color::Red),
-    mc_rtc::gui::plot::Y(
-        "residual_high_threshold(t)", [this]() { return residual_high_threshold[0]; }, mc_rtc::gui::Color::Green),
-    mc_rtc::gui::plot::Y(
-        "residual_low_threshold(t)", [this]() { return residual_low_threshold[0]; }, mc_rtc::gui::Color::Blue)
-    );
-
-  //Residual current
-  gui.addPlot(
-    plots_[8],
-    mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
-    mc_rtc::gui::plot::Y(
-        "residual_current(t)", [this]() { return residual_current_[0]; }, mc_rtc::gui::Color::Red),
-    mc_rtc::gui::plot::Y(
-        "residual_current_high_threshold(t)", [this]() { return residual_current_high_threshold[0]; }, mc_rtc::gui::Color::Green),
-    mc_rtc::gui::plot::Y(
-        "residual_current_low_threshold(t)", [this]() { return residual_current_low_threshold[0]; }, mc_rtc::gui::Color::Blue)
-    );
-
-  //Residual energy
-  gui.addPlot(
-    plots_[9],
-    mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
-    mc_rtc::gui::plot::Y(
-        "residual_energy(t)", [this]() { return residual_energy_; }, mc_rtc::gui::Color::Red),
-    mc_rtc::gui::plot::Y(
-        "residual_energy_high_threshold(t)", [this]() { return residual_energy_high_threshold; }, mc_rtc::gui::Color::Green),
-    mc_rtc::gui::plot::Y(
-        "residual_energy_low_threshold(t)", [this]() { return residual_energy_low_threshold; }, mc_rtc::gui::Color::Blue)
-    );
-
+  zurlo_.addPlot(plots_, counter, ctl);
 }
 
 void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl)
@@ -422,29 +366,7 @@ void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl
     mc_rtc::gui::Checkbox(
         "Jerk Estimation for collision detection", [this]() { return jerkEstimationFlag_; }, [this](){jerkEstimationFlag_ = !jerkEstimationFlag_;}));
 
-  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
-    mc_rtc::gui::Checkbox(
-        "Zurlo Estimation for collision detection", [this]() { return zurloEstimationFlag_; }, [this](){zurloEstimationFlag_ = !zurloEstimationFlag_;}));
-  
-  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
-    mc_rtc::gui::Checkbox(
-        "Zurlo Estimation stop the system when a collision is detected", [this]() { return zurloEstimationControlFlag_; }, [this](){zurloEstimationControlFlag_ = !zurloEstimationControlFlag_;}));
-  
-  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
-    mc_rtc::gui::Checkbox(
-        "Zurlo Estimation use residual", [this]() { return zurloUse_residual_; }, [this](){zurloUse_residual_ = !zurloUse_residual_;}));
-  
-  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
-    mc_rtc::gui::Checkbox(
-        "Zurlo Estimation use residual current", [this]() { return zurloUse_residual_current_; }, [this](){zurloUse_residual_current_ = !zurloUse_residual_current_;}));
-  
-  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
-    mc_rtc::gui::NumberInput(
-        "Zurlo Obstacle Threshold Sensitivity", [this]() { return this->sensitivityThreshold; },
-        [this](double threshold)
-        {
-          sensitivityThreshold = threshold;
-        }));
+  zurlo_.addGui(ctl);
 
   gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
     mc_rtc::gui::Checkbox(
@@ -541,22 +463,12 @@ void ObstacleDetectionJerkEstimator::addLog(mc_control::MCGlobalController & ctl
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_acc_vel_dot_norm", [this]() { return acc_dot_vel_.norm(); });
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_obstacleDetected_", [this]() { return obstacle_detected_; });
 
-  // Zurlo estimation
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_high_threshold", [this]() { return residual_high_threshold; });
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_current_high_threshold", [this]() { return residual_current_high_threshold; });
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_energy_high_threshold", [this]() { return residual_energy_high_threshold; });
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_low_threshold", [this]() { return residual_low_threshold; });
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_current_low_threshold", [this]() { return residual_current_low_threshold; });
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_residual_energy_low_threshold", [this]() { return residual_energy_low_threshold; });
-
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_base_", [this]() { return detection_jerk_base_; });
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_vel_", [this]() { return detection_jerk_vel_; });
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_withoutModel_", [this]() { return detection_jerk_withoutModel_; });
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_qp_", [this]() { return detection_jerk_qp_; });
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_zurlo_current_", [this]() { return detection_zurlo_current_; });
-  ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_zurlo_torque_", [this]() { return detection_zurlo_torque_; });
 
-
+  zurlo_.addLog(ctl);
 }
 
 mc_control::GlobalPlugin::GlobalPluginConfiguration ObstacleDetectionJerkEstimator::configuration()
@@ -836,76 +748,6 @@ void ObstacleDetectionJerkEstimator::jerkEstimationFromQP(mc_control::MCGlobalCo
   {
     detection_jerk_qp_ = true;
   }
-}
-
-void ObstacleDetectionJerkEstimator::zurloEstimation(mc_control::MCGlobalController & ctl)
-{
-  detection_zurlo_current_ = false;
-  detection_zurlo_torque_ = false;
-  if(ctl.controller().datastore().has("speed_residual"))
-  {
-    residual_ = ctl.controller().datastore().get<Eigen::VectorXd>("speed_residual");
-  }
-  else
-  {
-    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] The speed_residual is not available in the datastore");
-  }
-  if(ctl.controller().datastore().has("current_residual"))
-  {
-    residual_current_ = ctl.controller().datastore().get<Eigen::VectorXd>("current_residual");
-  }
-  else
-  {
-    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] The current_residual is not available in the datastore");
-  }
-  if(ctl.controller().datastore().has("energy_residual"))
-  {
-    residual_energy_ = ctl.controller().datastore().get<double>("energy_residual");
-  }
-  else
-  {
-    mc_rtc::log::error("[ObstacleDetectionJerkEstimator] The energy_residual is not available in the datastore");
-  }
-
-  if((residual_energy_ > residual_energy_high_threshold) || (residual_energy_ < residual_energy_low_threshold))
-      {
-        for(int i = 0; i < jointNumber_; i++)
-        {
-          if(zurloUse_residual_current_)
-          {
-            if((residual_current_(i) > residual_current_high_threshold(i)) || (residual_current_(i) < residual_current_low_threshold(i)))
-            {
-              detection_zurlo_current_ = true;
-              if(zurloEstimationControlFlag_)
-              {
-                obstacle_detected_ = true;
-                mc_rtc::log::info("Obstacle detected with Zurlo estimation");
-              }
-            }
-          }
-          if(zurloUse_residual_)
-          {
-            if((residual_(i) > residual_high_threshold(i)) || (residual_(i) < residual_low_threshold(i)))
-            {
-              detection_zurlo_torque_ = true;
-              if(zurloEstimationControlFlag_)
-              {
-                obstacle_detected_ = true;
-                mc_rtc::log::info("Obstacle detected with Zurlo estimation");
-              }
-            }
-          }
-        }
-      }
-  
-
-  // Update the thresholds
-  residual_high_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_high_threshold, residual_, true);
-  residual_current_high_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_high_threshold, residual_current_, true);
-  residual_energy_high_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_high_threshold, residual_energy_, true);
-  residual_low_threshold = zurloNiblackThreshold_residual_.adaptiveThreshold(residual_low_threshold, residual_, false);
-  residual_current_low_threshold = zurloNiblackThreshold_residual_current_.adaptiveThreshold(residual_current_low_threshold, residual_current_, false);
-  residual_energy_low_threshold = zurloNiblackThreshold_residual_energy_.adaptiveThreshold(residual_energy_low_threshold, residual_energy_, false);
 }
 
 void ObstacleDetectionJerkEstimator::setEstimationType(std::string t)
