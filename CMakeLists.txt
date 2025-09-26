@@ -21,18 +21,24 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ObstacleDetectionJerkEstimator.ya
 
 set(plugin_SRC 
   src/ObstacleDetectionJerkEstimator.cpp
-  thresholds/NiblackThreshold.cpp
-  thresholds/CusumThreshold.cpp
+  # thresholds/NiblackThreshold.cpp
+  # thresholds/CusumThreshold.cpp
   thresholds/LpfThreshold.cpp
-  collisions_algorithms/Zurlo.cpp
+  # collisions_algorithms/Zurlo.cpp
+  # collisions_algorithms/Birjandi.cpp
+  # collisions_algorithms/BirjandiStateDynamics.cpp
+  # collisions_algorithms/SuperTwisting.cpp
   )
 
 set(plugin_HDR 
   src/ObstacleDetectionJerkEstimator.h
-  thresholds/NiblackThreshold.h
-  thresholds/CusumThreshold.h
+  # thresholds/NiblackThreshold.h
+  # thresholds/CusumThreshold.h
   thresholds/LpfThreshold.h
-  collisions_algorithms/Zurlo.h
+  # collisions_algorithms/Zurlo.h
+  # collisions_algorithms/Birjandi.h
+  # collisions_algorithms/BirjandiStateDynamics.h
+  # collisions_algorithms/SuperTwisting.h
   )
 
 # The add_plugin macro is provided by mc_rtc

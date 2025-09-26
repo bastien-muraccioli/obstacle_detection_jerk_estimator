@@ -36,8 +36,8 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   
   // Flags
   imu_not_yet_initialized_ = true;
-  remove_plot_flag_= false;
-  reset_plot_flag_ = false;
+  // remove_plot_flag_= false;
+  // reset_plot_flag_ = false;
   collision_stop_activated_ = true;
   obstacle_detected_= false;
   obstacle_detection_has_changed_ = false;
@@ -54,18 +54,21 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   detection_jerk_withoutModel_ = false;
   detection_jerk_qp_ = false;
 
-  ctl.controller().datastore().make_call("ObstacleDetectionJerkEstimator::ResetPlot", [this]() {
-      this->reset_plot_flag_ = true;
-    });
+  // ctl.controller().datastore().make_call("ObstacleDetectionJerkEstimator::ResetPlot", [this]() {
+  //     this->reset_plot_flag_ = true;
+  //   });
 
-  ctl.controller().datastore().make_call("ObstacleDetectionJerkEstimator::RemovePlot", [this](){
-      this->remove_plot_flag_ = true;
-    });
+  // ctl.controller().datastore().make_call("ObstacleDetectionJerkEstimator::RemovePlot", [this](){
+  //     this->remove_plot_flag_ = true;
+  //   });
 
-  ctl.controller().datastore().make<bool>("Obstacle detected", false);
+  if(!ctl.controller().datastore().has("Obstacle detected"))
+  {
+    ctl.controller().datastore().make<bool>("Obstacle detected", false);
+  }
 
   dt_ = ctl.timestep();
-  internal_counter_ = 0;
+  counter_ = 0.0;
   obstacle_threshold_ = 10000.0;
 
   // Gains
@@ -139,6 +142,7 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
   if(robot.hasBodySensor(imuBodyName_))
   {
     jerkEstimationInit(ctl);
+    // birjandi_.init(ctl, imuBodyName_, "spherical_wrist_2_link", robotBodyName_);
     isIMU_ = true;
   }
   else {
@@ -146,24 +150,25 @@ void ObstacleDetectionJerkEstimator::init(mc_control::MCGlobalController & contr
     mc_rtc::log::error("The IMU sensor {} does not exist in the robot", imuBodyName_);
   }
 
-  // Zurlo estimation
-  windowSize = 100;
-  if(config.has("windowSize"))
-  {
-    windowSize = config("windowSize");
-  }
-  sensitivityThresholdNiblack = 8.0;
-  if(config.has("sensitivityThresholdNiblack"))
-  {
-    sensitivityThresholdNiblack = config("sensitivityThresholdNiblack");
-  }
-  sensitivityThresholdCusum = 0.5;
-  if(config.has("sensitivityThresholdCusum"))
-  {
-    sensitivityThresholdCusum = config("sensitivityThresholdCusum");
-  }
-  zurlo_.setValues(windowSize, jointNumber_, sensitivityThresholdNiblack, sensitivityThresholdCusum);
+  // // Zurlo estimation
+  // windowSize = 100;
+  // if(config.has("windowSize"))
+  // {
+  //   windowSize = config("windowSize");
+  // }
+  // sensitivityThresholdNiblack = 8.0;
+  // if(config.has("sensitivityThresholdNiblack"))
+  // {
+  //   sensitivityThresholdNiblack = config("sensitivityThresholdNiblack");
+  // }
+  // sensitivityThresholdCusum = 0.5;
+  // if(config.has("sensitivityThresholdCusum"))
+  // {
+  //   sensitivityThresholdCusum = config("sensitivityThresholdCusum");
+  // }
+  // // zurlo_.setValues(windowSize, jointNumber_, sensitivityThresholdNiblack, sensitivityThresholdCusum);
 
+  // superTwisting_.init(ctl);
   addGui(ctl);
   addLog(ctl);
 
@@ -187,30 +192,47 @@ void ObstacleDetectionJerkEstimator::before(mc_control::MCGlobalController & con
   {
     jerkEstimation(ctl);
   }
-  if(zurlo_.zurloEstimationFlag_&& qdot.any() > 0.1)
-  {
-    obstacle_detected_ = zurlo_.collisionDetection(ctl);
-  }
+  // if(zurlo_.zurloEstimationFlag_&& qdot.any() > 0.1)
+  // {
+  //   obstacle_detected_ = zurlo_.collisionDetection(ctl);
+  // }
   
   if(obstacle_detected_ != obstacle_detection_has_changed_)
   {
     obstacle_detection_has_changed_ = obstacle_detected_;
     ctl.controller().datastore().get<bool>("Obstacle detected") = obstacle_detected_;
   }
-  if(reset_plot_flag_)
+  // if(reset_plot_flag_)
+  // {
+  //   removePlot(ctl);
+  //   addPlot(ctl);
+  //   reset_plot_flag_ = false;
+  // }
+  // if(remove_plot_flag_)
+  // {
+  //   removePlot(ctl);
+  //   remove_plot_flag_ = false;
+  // }
+  // if(isIMU_)
+  // {
+  //   birjandi_.collisionDetection(ctl);
+  // }
+
+  // superTwisting_.computeMomemtum(ctl);
+
+  counter_ += dt_;
+
+  if(plot_flag_ & !plot_added_)
   {
-    removePlot(ctl);
     addPlot(ctl);
-    reset_plot_flag_ = false;
-  }
-  if(remove_plot_flag_)
-  {
-    removePlot(ctl);
-    remove_plot_flag_ = false;
+    plot_added_ = true;
   }
 
-  internal_counter_++;
-  zurlo_.updateCounter(internal_counter_ * dt_);
+  // internal_counter_++;
+  // double counter = static_cast<double>(internal_counter_) * dt_;
+  // zurlo_.updateCounter(counter);
+  // superTwisting_.updateCounter(counter);
+  // birjandi_.updateCounter(counter);
 }
 
 void ObstacleDetectionJerkEstimator::after(mc_control::MCGlobalController & controller)
@@ -221,11 +243,11 @@ void ObstacleDetectionJerkEstimator::after(mc_control::MCGlobalController & cont
 void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ctl)
 {
   auto & gui = *ctl.controller().gui();
-  double counter = static_cast<double>(internal_counter_) * dt_;
+  // double counter = static_cast<double>(internal_counter_) * dt_;
   gui.addPlot(
-      plots_[0],
+      "jerk",
       mc_rtc::gui::plot::X(
-          "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+          "t", [this]() { return counter_; }),
       mc_rtc::gui::plot::Y(
           "no filtered jerk(t)", [this]() { return jerk_withoutModel_noFiltration_.norm(); }, mc_rtc::gui::Color::Red),
       mc_rtc::gui::plot::Y(
@@ -240,9 +262,9 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
 
   //jerk_dot_
   gui.addPlot(
-    plots_[1],
+    "jerk_dot",
     mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+        "t", [this]() { return counter_; }),
     mc_rtc::gui::plot::Y(
         "jerk_dot(t)", [this]() { return jerk_dot_base_.norm(); }, mc_rtc::gui::Color::Blue),
     mc_rtc::gui::plot::Y(
@@ -251,9 +273,9 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
 
   //omega
   gui.addPlot(
-    plots_[2],
+    "omega",
     mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+        "t", [this]() { return counter_; }),
     mc_rtc::gui::plot::Y(
     "gyro(t)", [this]() { return gyro_.norm(); }, mc_rtc::gui::Color::Red),
     mc_rtc::gui::plot::Y(
@@ -266,18 +288,18 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
 
   //accelero
   gui.addPlot(
-    plots_[3],
+    "accelero",
     mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+        "t", [this]() { return counter_; }),
     mc_rtc::gui::plot::Y(
         "accelero(t)", [this]() { return accelero_.norm(); }, mc_rtc::gui::Color::Red)
     );
 
   //Rotation matrix
   gui.addPlot(
-    plots_[4],
+    "R",
     mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+        "t", [this]() { return counter_; }),
     mc_rtc::gui::plot::Y(
         "R(t)", [this]() { return R_base_.norm(); }, mc_rtc::gui::Color::Blue),
     mc_rtc::gui::plot::Y(
@@ -288,9 +310,9 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
 
   //Velocity
   gui.addPlot(
-    plots_[5],
+    "velocity",
     mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+        "t", [this]() { return counter_; }),
     mc_rtc::gui::plot::Y(
         "v_rob(t)", [this]() { return v_encoders_.norm(); }, mc_rtc::gui::Color::Red),
     mc_rtc::gui::plot::Y(
@@ -299,9 +321,9 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
 
   //Acceleration
   gui.addPlot(
-    plots_[6],
+    "acceleration",
     mc_rtc::gui::plot::X(
-        "t", [this]() { return static_cast<double>(internal_counter_) * dt_; }),
+        "t", [this]() { return counter_; }),
     mc_rtc::gui::plot::Y(
         "v_dot", [this]() { return v_dot_vel_.norm(); }, mc_rtc::gui::Color::Green),
     mc_rtc::gui::plot::Y(
@@ -312,13 +334,19 @@ void ObstacleDetectionJerkEstimator::addPlot(mc_control::MCGlobalController & ct
         "acc_qp(t)", [this]() { return acc_qp_.norm(); }, mc_rtc::gui::Color::Magenta)
     );
 
-  zurlo_.addPlot(plots_, counter, ctl);
+  // zurlo_.addPlot(plots_, counter, ctl);
+  // superTwisting_.addPlot(plots_, counter, ctl);
+  // birjandi_.addPlot(plots_, counter, ctl);
 }
 
 void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl)
 {
   auto & gui = *ctl.controller().gui();
-  plots_ = {"jerk", "jerk_dot", "omega", "accelero", "R", "velocity", "acceleration", "residual", "residual_current", "residual_energy"};
+  // plots_ = {"jerk", "jerk_dot", "omega", "accelero", "R", "velocity", "acceleration", "residual", "residual_current", "residual_energy", "momentum", "momentum_error"};
+
+  gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
+    mc_rtc::gui::Checkbox(
+        "Plot", [this]() { return plot_flag_; }, [this](){plot_flag_ = !plot_flag_;}));
 
   gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
     mc_rtc::gui::NumberInput(
@@ -371,7 +399,7 @@ void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl
     mc_rtc::gui::Checkbox(
         "Jerk Estimation for collision detection", [this]() { return jerkEstimationFlag_; }, [this](){jerkEstimationFlag_ = !jerkEstimationFlag_;}));
 
-  zurlo_.addGui(ctl);
+  // zurlo_.addGui(ctl);
 
   gui.addElement({"Plugins", "ObstacleDetectionJerkEstimator"},
     mc_rtc::gui::Checkbox(
@@ -392,6 +420,8 @@ void ObstacleDetectionJerkEstimator::addGui(mc_control::MCGlobalController & ctl
       [this]() {return getEstimationType();},
       [this](const std::string & t){setEstimationType(t);})
     );  
+
+  // superTwisting_.addGui(ctl);
 }
 
 void ObstacleDetectionJerkEstimator::addLog(mc_control::MCGlobalController & ctl)
@@ -473,7 +503,9 @@ void ObstacleDetectionJerkEstimator::addLog(mc_control::MCGlobalController & ctl
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_withoutModel_", [this]() { return detection_jerk_withoutModel_; });
   ctl.controller().logger().addLogEntry("ObstacleDetectionJerkEstimator_detection_jerk_qp_", [this]() { return detection_jerk_qp_; });
 
-  zurlo_.addLog(ctl);
+  // zurlo_.addLog(ctl);
+  // superTwisting_.addLog(ctl);
+  // birjandi_.addLog(ctl);
 }
 
 mc_control::GlobalPlugin::GlobalPluginConfiguration ObstacleDetectionJerkEstimator::configuration()
@@ -485,15 +517,15 @@ mc_control::GlobalPlugin::GlobalPluginConfiguration ObstacleDetectionJerkEstimat
   return out;
 }
 
-void ObstacleDetectionJerkEstimator::removePlot(mc_control::MCGlobalController & ctl)
-{
-  auto & gui = *ctl.controller().gui();
-  for(const auto & plot : plots_)
-  {
-    mc_rtc::log::info("Removing plot {}", plot);
-    gui.removePlot(plot);
-  }
-}
+// void ObstacleDetectionJerkEstimator::removePlot(mc_control::MCGlobalController & ctl)
+// {
+//   auto & gui = *ctl.controller().gui();
+//   for(const auto & plot : plots_)
+//   {
+//     mc_rtc::log::info("Removing plot {}", plot);
+//     gui.removePlot(plot);
+//   }
+// }
 
 void ObstacleDetectionJerkEstimator::jerkEstimationInit(mc_control::MCGlobalController & ctl)
 {

@@ -13,7 +13,9 @@
 #include <RBDyn/FK.h>
 #include <RBDyn/FV.h>
 #include <RBDyn/FA.h>
-#include "../collisions_algorithms/Zurlo.h"
+// #include "../collisions_algorithms/Zurlo.h"
+// #include "../collisions_algorithms/SuperTwisting.h"
+// #include "../collisions_algorithms/Birjandi.h"
 
 namespace mc_plugin
 {
@@ -33,7 +35,7 @@ struct ObstacleDetectionJerkEstimator : public mc_control::GlobalPlugin
   void addGui(mc_control::MCGlobalController & ctl);
   void addLog(mc_control::MCGlobalController & ctl);
   void addPlot(mc_control::MCGlobalController & ctl);
-  void removePlot(mc_control::MCGlobalController & ctl);
+  // void removePlot(mc_control::MCGlobalController & ctl);
 
 
   void jerkEstimation(mc_control::MCGlobalController & ctl);
@@ -57,16 +59,19 @@ struct ObstacleDetectionJerkEstimator : public mc_control::GlobalPlugin
   ~ObstacleDetectionJerkEstimator() override;
 
 private:
-  std::vector<std::string> plots_;
+  // std::vector<std::string> plots_;
   double dt_; // Time step
   double obstacle_threshold_; // Threshold to detect an obstacle
-  int internal_counter_; // Internal counter
+  double counter_;
+  // int internal_counter_; // Internal counter
   std::string imuBodyName_; // Name of the IMU sensor
   std::string robotBodyName_;
   std::string bodySensor_name_;
   bool isIMU_;
   int jointNumber_;
   int estimationType_; // Type of jerk estimation: 0 -> base, 1 -> with linear velocity, 2 -> without model, 3 -> from QP
+  bool plot_flag_ = false;
+  bool plot_added_ = false;
 
   // Gains
   double k_; // Gyro bias correction gain
@@ -79,8 +84,8 @@ private:
   double alpha_acc_; // Complementary filter gain for acceleration estimation
 
   // Flags
-  bool remove_plot_flag_;
-  bool reset_plot_flag_;
+  // bool remove_plot_flag_;
+  // bool reset_plot_flag_;
   bool imu_not_yet_initialized_;
   bool collision_stop_activated_;
   bool obstacle_detected_; // Flag to indicate if an obstacle is detected
@@ -146,17 +151,23 @@ private:
   Eigen::Vector3d acc_vel_; // Linear acceleration including the linear velocity
   Eigen::Vector3d acc_dot_vel_; // Derivative of the linear acceleration including the linear velocity
   
-  // Dario Zurlo estimation
-  Zurlo zurlo_;
-  int windowSize;             // Size of the sliding window
-  double sensitivityThresholdNiblack;        
-  double sensitivityThresholdCusum;
+  // // Dario Zurlo estimation
+  // Zurlo zurlo_;
+  // int windowSize;             // Size of the sliding window
+  // double sensitivityThresholdNiblack;        
+  // double sensitivityThresholdCusum;
 
   // Detection observer
   bool detection_jerk_base_;
   bool detection_jerk_vel_;
   bool detection_jerk_withoutModel_;
   bool detection_jerk_qp_;
+
+  // // Super Twisting Observer
+  // SuperTwisting superTwisting_;
+
+  // // Birjandi Observer
+  // Birjandi birjandi_;
 };
 
 } // namespace mc_plugin
